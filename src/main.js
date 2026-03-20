@@ -12,14 +12,19 @@ const API_URL = `http://localhost:${API_PORT}`;
 // ── Localiza o executável Python bundled ────────────────────────────────────
 
 function getPythonExe() {
-  // Em produção (empacotado): está em resources/python-dist/
-  // Em desenvolvimento: está em ./python-dist/
+  // electron-builder copia python-dist/server/ para resources/python-dist/server/
   const candidates = [
+    // Produção (portable .exe)
     path.join(process.resourcesPath, "python-dist", "server", "server.exe"),
+    path.join(process.resourcesPath, "python-dist", "server.exe"),
+    // Desenvolvimento
     path.join(__dirname, "..", "python-dist", "server", "server.exe"),
-    path.join(__dirname, "python-dist", "server", "server.exe"),
+    path.join(__dirname, "..", "python-dist", "server.exe"),
   ];
+
+  console.log("[electron] Procurando server.exe em:");
   for (const p of candidates) {
+    console.log("  ", p, "->", fs.existsSync(p) ? "EXISTE" : "nao encontrado");
     if (fs.existsSync(p)) return p;
   }
   return null;
@@ -36,6 +41,21 @@ function startPythonServer() {
     }
 
     console.log("[electron] Iniciando servidor:", exe);
+    console.log("[electron] Existe?", fs.existsSync(exe));
+    console.log("[electron] resourcesPath:", process.resourcesPath);
+    console.log("[electron] __dirname:", __dirname);
+
+    // Lista o conteúdo de python-dist para debug
+    const pythonDistPath = path.join(process.resourcesPath, "python-dist");
+    if (fs.existsSync(pythonDistPath)) {
+      console.log("[electron] python-dist existe:", fs.readdirSync(pythonDistPath));
+    } else {
+      console.log("[electron] python-dist NÃO existe em:", pythonDistPath);
+      // Tenta listar resources
+      if (fs.existsSync(process.resourcesPath)) {
+        console.log("[electron] resources contém:", fs.readdirSync(process.resourcesPath));
+      }
+    }
 
     pythonProcess = spawn(exe, [], {
       env: {
@@ -43,7 +63,7 @@ function startPythonServer() {
         GIOW_PORT: String(API_PORT),
         GIOW_MODE: "desktop",
       },
-      windowsHide: true, // não mostra janela de console no Windows
+      windowsHide: false, // mostra console para debug
     });
 
     pythonProcess.stdout.on("data", (d) => console.log("[python]", d.toString().trim()));
