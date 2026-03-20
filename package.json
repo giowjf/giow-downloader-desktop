@@ -1,0 +1,46 @@
+{
+  "name": "giow-downloader",
+  "version": "1.0.0",
+  "description": "GIOW Video Downloader",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build:installer": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "pro.giow.downloader",
+    "productName": "GIOW Downloader",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "GIOW-Downloader-${version}.exe"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "python-dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "python-dist/",
+        "to": "python-dist/",
+        "filter": ["**/*"]
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}
