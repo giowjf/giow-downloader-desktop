@@ -34,7 +34,7 @@
     "extraResources": [
       {
         "from": "python-dist/server/",
-        "to": "python-dist/server/",
+        "to": "server/",
         "filter": [
           "**/*"
         ]
