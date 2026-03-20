@@ -29,13 +29,12 @@
     },
     "files": [
       "src/**/*",
-      "assets/**/*",
-      "python-dist/**/*"
+      "!src/style.css.map"
     ],
     "extraResources": [
       {
-        "from": "python-dist/",
-        "to": "python-dist/",
+        "from": "python-dist/server/",
+        "to": "python-dist/server/",
         "filter": [
           "**/*"
         ]
