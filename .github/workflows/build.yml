@@ -49,6 +49,17 @@ jobs:
             "--add-binary=$ffmpeg;." `
             python/server.py
 
+      - name: Verificar python-dist
+        run: |
+          Write-Host "Conteúdo de python-dist:"
+          Get-ChildItem -Recurse python-dist | Select-Object FullName | Head -20
+          if (Test-Path "python-dist/server/server.exe") {
+            Write-Host "server.exe encontrado!"
+          } else {
+            Write-Host "ERRO: server.exe não encontrado"
+            exit 1
+          }
+
       - name: Build — Electron (executável portátil)
         run: npm run build
 
