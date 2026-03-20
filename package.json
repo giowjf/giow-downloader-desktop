@@ -18,10 +18,11 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
-      ],
-      "icon": "assets/icon.ico"
+      ]
     },
     "portable": {
       "artifactName": "GIOW-Downloader-${version}.exe"
@@ -35,7 +36,9 @@
       {
         "from": "python-dist/",
         "to": "python-dist/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   },
