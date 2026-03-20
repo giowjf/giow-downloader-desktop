@@ -12,20 +12,21 @@ const API_URL = `http://localhost:${API_PORT}`;
 // ── Localiza o executável Python bundled ────────────────────────────────────
 
 function getPythonExe() {
-  // electron-builder copia python-dist/server/ para resources/python-dist/server/
+  // extraResources mapeia python-dist/server/ → resources/server/
   const candidates = [
-    // Produção (portable .exe)
+    // Produção portable: resources/server/server.exe
+    path.join(process.resourcesPath, "server", "server.exe"),
+    // Fallback com subpasta python-dist
     path.join(process.resourcesPath, "python-dist", "server", "server.exe"),
-    path.join(process.resourcesPath, "python-dist", "server.exe"),
-    // Desenvolvimento
+    // Desenvolvimento local
     path.join(__dirname, "..", "python-dist", "server", "server.exe"),
-    path.join(__dirname, "..", "python-dist", "server.exe"),
   ];
 
   console.log("[electron] Procurando server.exe em:");
   for (const p of candidates) {
-    console.log("  ", p, "->", fs.existsSync(p) ? "EXISTE" : "nao encontrado");
-    if (fs.existsSync(p)) return p;
+    const exists = fs.existsSync(p);
+    console.log("  ", p, "->", exists ? "EXISTE" : "nao encontrado");
+    if (exists) return p;
   }
   return null;
 }
