@@ -12,13 +12,14 @@ const API_URL = `http://localhost:${API_PORT}`;
 // ── Localiza o executável Python bundled ────────────────────────────────────
 
 function getPythonExe() {
-  // extraResources mapeia python-dist/server/ → resources/server/
+  // files + asarUnpack coloca server/ em app.asar.unpacked/server/
   const candidates = [
-    // Produção portable: resources/server/server.exe
+    // Produção: app.asar.unpacked/server/server.exe
+    path.join(process.resourcesPath, "app.asar.unpacked", "server", "server.exe"),
+    // Fallback resources/server/
     path.join(process.resourcesPath, "server", "server.exe"),
-    // Fallback com subpasta python-dist
-    path.join(process.resourcesPath, "python-dist", "server", "server.exe"),
     // Desenvolvimento local
+    path.join(__dirname, "..", "server", "server.exe"),
     path.join(__dirname, "..", "python-dist", "server", "server.exe"),
   ];
 
