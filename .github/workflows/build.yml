@@ -60,8 +60,18 @@ jobs:
             exit 1
           }
 
+      - name: Copiar server para pasta acessível pelo Electron
+        run: |
+          Copy-Item -Recurse -Force python-dist/server server
+          Write-Host "server/server.exe existe:" (Test-Path "server/server.exe")
+
       - name: Build — Electron (executável portátil)
         run: npm run build
+
+      - name: Listar conteúdo do dist
+        run: |
+          Write-Host "=== Conteúdo de dist/ ==="
+          Get-ChildItem -Recurse dist | Select-Object FullName
 
       - name: Upload artefato
         uses: actions/upload-artifact@v4
