@@ -29,16 +29,10 @@
     },
     "files": [
       "src/**/*",
-      "!src/style.css.map"
+      "server/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "python-dist/server/",
-        "to": "server/",
-        "filter": [
-          "**/*"
-        ]
-      }
+    "asarUnpack": [
+      "server/**/*"
     ]
   },
   "devDependencies": {
