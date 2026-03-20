@@ -154,7 +154,13 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error("[electron] Erro ao iniciar:", err);
     const { dialog } = require("electron");
-    dialog.showErrorBox("Erro ao iniciar GIOW Downloader", err.message);
+    const debugInfo = [
+      `Erro: ${err.message}`,
+      `resourcesPath: ${process.resourcesPath}`,
+      `__dirname: ${__dirname}`,
+      `Tentou: ${path.join(process.resourcesPath, "python-dist", "server", "server.exe")}`,
+    ].join("\n");
+    dialog.showErrorBox("Erro ao iniciar GIOW Downloader", debugInfo);
     app.quit();
   }
 });
