@@ -16,12 +16,12 @@ function getPythonExe() {
   const isWin = process.platform === "win32";
   const exeName = isWin ? "server.exe" : "server";
 
-  // files + asarUnpack coloca server/ em app.asar.unpacked/server/
+  // extraResources copia server/ para resources/server/ (fora do asar)
   const candidates = [
-    // Produção: app.asar.unpacked/server/server[.exe]
-    path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
-    // Fallback resources/server/
+    // Produção: resources/server/server[.exe]  ← extraResources
     path.join(process.resourcesPath, "server", exeName),
+    // Fallback legado: app.asar.unpacked/server/
+    path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
     // Desenvolvimento local
     path.join(__dirname, "..", "server", exeName),
     path.join(__dirname, "..", "python-dist", "server", exeName),
