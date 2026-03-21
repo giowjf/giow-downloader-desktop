@@ -133,24 +133,45 @@ async function startDownload(btn, format) {
 
     renderBtnPhase(btn, "downloading", 0);
 
-    // Inicia o download via API local
-    // O yt-dlp baixa direto do YouTube para o outputPath escolhido
-    const res = await fetch(`${API}/download`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: currentUrl,
-        format_id: format.format_id,
-        mode: format.is_audio_only ? "mp3" : "mp4",
-        output_path: outputPath,
-      }),
+    // Inicia o download via SSE — recebe progresso em tempo real
+    await new Promise((resolve, reject) => {
+      fetch(`${API}/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: currentUrl,
+          format_id: format.format_id,
+          mode: format.is_audio_only ? "mp3" : "mp4",
+          output_path: outputPath,
+        }),
+      }).then(res => {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        function pump() {
+          reader.read().then(({ done, value }) => {
+            if (done) { resolve(); return; }
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop();
+            for (const line of lines) {
+              if (!line.startsWith("data:")) continue;
+              try {
+                const msg = JSON.parse(line.slice(5).trim());
+                if (msg.error) { reject(new Error(msg.error)); return; }
+                if (msg.done)  { resolve(); return; }
+                if (typeof msg.progress === "number") {
+                  renderBtnPhase(btn, "downloading", msg.progress);
+                }
+              } catch (e) {}
+            }
+            pump();
+          }).catch(reject);
+        }
+        pump();
+      }).catch(reject);
     });
-
-    const data = await res.json();
-
-    if (!res.ok || data.error) {
-      throw new Error(data.error || "Falha no download");
-    }
 
     renderBtnPhase(btn, "done", 100);
     await new Promise(r => setTimeout(r, 800));
