@@ -205,8 +205,9 @@ def test_build_yml():
           "choco install ffmpeg" in content)
     check("PyInstaller instalado",
           "pyinstaller" in content.lower())
-    check("yt-dlp[default] instalado",
-          "yt-dlp[default]" in content)
+    check("yt-dlp baixado como binário standalone",
+          "yt-dlp" in content and "releases/latest/download" in content,
+          "yt-dlp deve ser baixado como binário standalone, não via pip")
     check("--onedir no PyInstaller (não --onefile)",
           "--onedir" in content,
           "--onefile não permite executar binários externos como yt-dlp")
