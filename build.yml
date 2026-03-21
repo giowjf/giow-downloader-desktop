@@ -1,0 +1,198 @@
+name: Build Multi-Platform
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            artifact_glob: "dist/GIOW-Downloader-*-win.exe"
+          - os: macos-latest
+            target: mac
+            artifact_glob: "dist/GIOW-Downloader-*-mac.dmg"
+          - os: ubuntu-latest
+            target: linux
+            artifact_glob: "dist/GIOW-Downloader-*-linux.AppImage"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # ── ffmpeg ─────────────────────────────────────────────────────────────
+      - name: Instalar ffmpeg (Windows)
+        if: matrix.os == 'windows-latest'
+        run: choco install ffmpeg -y
+
+      - name: Instalar ffmpeg (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install ffmpeg
+
+      - name: Instalar ffmpeg (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # ── yt-dlp como binário standalone (NÃO via pip) ───────────────────────
+      # Motivo: yt-dlp instalado via pip e bundled pelo PyInstaller cria um
+      # executável PyInstaller-within-PyInstaller que crasha silenciosamente.
+      # A solução é baixar o binário oficial standalone do yt-dlp diretamente.
+      - name: Baixar yt-dlp standalone (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+          Invoke-WebRequest -Uri $url -OutFile "yt-dlp.exe"
+          Write-Host "yt-dlp.exe baixado: $((Get-Item yt-dlp.exe).Length) bytes"
+
+      - name: Baixar yt-dlp standalone (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o yt-dlp
+          chmod 755 yt-dlp
+          echo "yt-dlp baixado: $(du -h yt-dlp | cut -f1)"
+
+      - name: Baixar yt-dlp standalone (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o yt-dlp
+          chmod 755 yt-dlp
+          echo "yt-dlp baixado: $(du -h yt-dlp | cut -f1)"
+
+      # ── Dependências Python (sem yt-dlp — usamos o binário standalone) ─────
+      - name: Instalar dependências Python
+        run: pip install flask flask-cors pyinstaller
+
+      # ── PyInstaller — embute flask + ffmpeg, mas NÃO o yt-dlp ────────────
+      # O yt-dlp standalone é adicionado como binário direto (não reempacotado)
+      - name: Build PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ffmpeg = (Get-Command ffmpeg).Source
+          $ytdlp = (Resolve-Path "yt-dlp.exe").Path
+          python -m PyInstaller `
+            --onedir `
+            --name server `
+            --distpath python-dist `
+            --workpath build/pyinstaller `
+            --specpath build `
+            --noconsole `
+            --clean `
+            "--add-binary=$ytdlp;." `
+            "--add-binary=$ffmpeg;." `
+            python/server.py
+
+      - name: Build PyInstaller (macOS/Linux)
+        if: matrix.os != 'windows-latest'
+        run: |
+          FFMPEG=$(which ffmpeg)
+          YTDLP="$PWD/yt-dlp"
+          python -m PyInstaller \
+            --onedir \
+            --name server \
+            --distpath python-dist \
+            --workpath build/pyinstaller \
+            --specpath build \
+            --clean \
+            "--add-binary=$YTDLP:." \
+            "--add-binary=$FFMPEG:." \
+            python/server.py
+          chmod 755 python-dist/server/server
+
+      # ── Verificar que yt-dlp está dentro do bundle ─────────────────────────
+      - name: Verificar yt-dlp no bundle (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ytdlp = "python-dist/server/_internal/yt-dlp.exe"
+          if (Test-Path $ytdlp) {
+            Write-Host "✓ yt-dlp.exe encontrado no bundle"
+          } else {
+            Write-Host "Conteúdo de _internal:"; Get-ChildItem "python-dist/server/_internal" | Select-Object Name
+            Write-Host "ERRO: yt-dlp.exe não encontrado no bundle"; exit 1
+          }
+
+      - name: Verificar yt-dlp no bundle (macOS/Linux)
+        if: matrix.os != 'windows-latest'
+        run: |
+          if [ -f "python-dist/server/_internal/yt-dlp" ]; then
+            echo "✓ yt-dlp encontrado no bundle"
+          else
+            echo "Conteúdo de _internal:"; ls python-dist/server/_internal/
+            echo "ERRO: yt-dlp não encontrado no bundle"; exit 1
+          fi
+
+      # ── Copia server/ para onde o electron-builder espera ─────────────────
+      - name: Copiar server (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse -Force python-dist/server server
+          if (Test-Path "server/server.exe") {
+            Write-Host "✓ server/server.exe encontrado"
+          } else {
+            Write-Host "ERRO: server/server.exe não encontrado"; exit 1
+          }
+
+      - name: Copiar server (macOS/Linux)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cp -r python-dist/server server
+          chmod 755 server/server
+          if [ -f "server/server" ]; then
+            echo "✓ server/server encontrado"
+          else
+            echo "ERRO: server/server não encontrado"; exit 1
+          fi
+
+      # ── Build Electron ─────────────────────────────────────────────────────
+      - name: npm install
+        run: npm install
+
+      - name: Build Electron (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npm run build:win
+
+      - name: Build Electron (macOS)
+        if: matrix.os == 'macos-latest'
+        run: npm run build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Build Electron (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run build:linux
+
+      # ── Upload ─────────────────────────────────────────────────────────────
+      - name: Upload artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: GIOW-Downloader-${{ matrix.target }}
+          path: ${{ matrix.artifact_glob }}
+          retention-days: 30
+
+      - name: Release (se for tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ matrix.artifact_glob }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
