@@ -12,18 +12,23 @@ const API_URL = `http://localhost:${API_PORT}`;
 // ── Localiza o executável Python bundled ────────────────────────────────────
 
 function getPythonExe() {
+  // Em Windows o binário é server.exe, em macOS/Linux é apenas server
+  const isWin = process.platform === "win32";
+  const exeName = isWin ? "server.exe" : "server";
+
   // files + asarUnpack coloca server/ em app.asar.unpacked/server/
   const candidates = [
-    // Produção: app.asar.unpacked/server/server.exe
-    path.join(process.resourcesPath, "app.asar.unpacked", "server", "server.exe"),
+    // Produção: app.asar.unpacked/server/server[.exe]
+    path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
     // Fallback resources/server/
-    path.join(process.resourcesPath, "server", "server.exe"),
+    path.join(process.resourcesPath, "server", exeName),
     // Desenvolvimento local
-    path.join(__dirname, "..", "server", "server.exe"),
-    path.join(__dirname, "..", "python-dist", "server", "server.exe"),
+    path.join(__dirname, "..", "server", exeName),
+    path.join(__dirname, "..", "python-dist", "server", exeName),
   ];
 
-  console.log("[electron] Procurando server.exe em:");
+  console.log(`[electron] Plataforma: ${process.platform}`);
+  console.log(`[electron] Procurando ${exeName} em:`);
   for (const p of candidates) {
     const exists = fs.existsSync(p);
     console.log("  ", p, "->", exists ? "EXISTE" : "nao encontrado");
@@ -46,6 +51,16 @@ function startPythonServer() {
     console.log("[electron] Existe?", fs.existsSync(exe));
     console.log("[electron] resourcesPath:", process.resourcesPath);
     console.log("[electron] __dirname:", __dirname);
+
+    // Em macOS/Linux, garante que o binário tem permissão de execução
+    if (process.platform !== "win32") {
+      try {
+        fs.chmodSync(exe, 0o755);
+        console.log("[electron] chmod 755 aplicado ao servidor");
+      } catch (e) {
+        console.warn("[electron] Não foi possível aplicar chmod:", e.message);
+      }
+    }
 
     // Lista o conteúdo de python-dist para debug
     const pythonDistPath = path.join(process.resourcesPath, "python-dist");
