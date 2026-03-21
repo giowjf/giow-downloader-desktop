@@ -16,12 +16,12 @@ function getPythonExe() {
   const isWin = process.platform === "win32";
   const exeName = isWin ? "server.exe" : "server";
 
-  // extraResources copia server/ para resources/server/ (fora do asar)
+  // asarUnpack desempacota server/ para app.asar.unpacked/server/
   const candidates = [
-    // Produção: resources/server/server[.exe]  ← extraResources
-    path.join(process.resourcesPath, "server", exeName),
-    // Fallback legado: app.asar.unpacked/server/
+    // Produção: app.asar.unpacked/server/server[.exe]  ← asarUnpack
     path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
+    // Fallback: resources/server/ (caso sem asar)
+    path.join(process.resourcesPath, "server", exeName),
     // Desenvolvimento local
     path.join(__dirname, "..", "server", exeName),
     path.join(__dirname, "..", "python-dist", "server", exeName),
@@ -43,7 +43,31 @@ function startPythonServer() {
   return new Promise((resolve, reject) => {
     const exe = getPythonExe();
     if (!exe) {
-      reject(new Error("Servidor Python não encontrado. Reinstale o aplicativo."));
+      // Debug detalhado: lista o que realmente existe em resources/
+      let debugLines = ["Candidatos testados (nenhum encontrado):"];
+      const isWin = process.platform === "win32";
+      const exeName = isWin ? "server.exe" : "server";
+      debugLines.push(
+        `  ${path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName)}`,
+        `  ${path.join(process.resourcesPath, "server", exeName)}`
+      );
+
+      try {
+        debugLines.push(`\nConteúdo de resources/:`);
+        fs.readdirSync(process.resourcesPath).forEach(f => debugLines.push(`  ${f}`));
+      } catch (e) { debugLines.push(`  (erro ao listar: ${e.message})`); }
+
+      try {
+        const unpackedPath = path.join(process.resourcesPath, "app.asar.unpacked");
+        if (fs.existsSync(unpackedPath)) {
+          debugLines.push(`\nConteúdo de app.asar.unpacked/:`);
+          fs.readdirSync(unpackedPath).forEach(f => debugLines.push(`  ${f}`));
+        } else {
+          debugLines.push(`\napp.asar.unpacked/ NÃO existe`);
+        }
+      } catch (e) { debugLines.push(`  (erro: ${e.message})`); }
+
+      reject(new Error("Servidor Python não encontrado. Reinstale o aplicativo.\n\n" + debugLines.join("\n")));
       return;
     }
 
@@ -59,18 +83,6 @@ function startPythonServer() {
         console.log("[electron] chmod 755 aplicado ao servidor");
       } catch (e) {
         console.warn("[electron] Não foi possível aplicar chmod:", e.message);
-      }
-    }
-
-    // Lista o conteúdo de python-dist para debug
-    const pythonDistPath = path.join(process.resourcesPath, "python-dist");
-    if (fs.existsSync(pythonDistPath)) {
-      console.log("[electron] python-dist existe:", fs.readdirSync(pythonDistPath));
-    } else {
-      console.log("[electron] python-dist NÃO existe em:", pythonDistPath);
-      // Tenta listar resources
-      if (fs.existsSync(process.resourcesPath)) {
-        console.log("[electron] resources contém:", fs.readdirSync(process.resourcesPath));
       }
     }
 
@@ -170,12 +182,10 @@ app.whenReady().then(async () => {
     createWindow();
   } catch (err) {
     console.error("[electron] Erro ao iniciar:", err);
-    const { dialog } = require("electron");
     const debugInfo = [
       `Erro: ${err.message}`,
       `resourcesPath: ${process.resourcesPath}`,
       `__dirname: ${__dirname}`,
-      `Tentou: ${path.join(process.resourcesPath, "python-dist", "server", "server.exe")}`,
     ].join("\n");
     dialog.showErrorBox("Erro ao iniciar GIOW Downloader", debugInfo);
     app.quit();
