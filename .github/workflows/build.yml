@@ -126,6 +126,7 @@ jobs:
         run: npm run build:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false   # sem code signing no CI
+          ELECTRON_BUILDER_PUBLISH: never      # não tenta publicar release
 
       - name: Build Electron (Linux)
         if: matrix.os == 'ubuntu-latest'
