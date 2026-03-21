@@ -121,8 +121,8 @@ async function startDownload(btn, format) {
     let outputPath;
     if (window.electronAPI) {
       // Electron: abre dialog nativo de "Salvar como"
-      const result = await window.electronAPI.showSaveDialog(filename);
-      if (result.canceled) {
+      const result = await window.electronAPI.saveFile(filename);
+      if (!result || result.canceled) {
         throw new Error("canceled");
       }
       outputPath = result.path;

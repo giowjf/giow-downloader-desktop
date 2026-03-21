@@ -82,7 +82,7 @@ function startPythonServer() {
 
     pythonProcess = spawn(exe, [], {
       env: { ...process.env, GIOW_PORT: String(API_PORT), GIOW_MODE: "desktop" },
-      windowsHide: false,
+      windowsHide: true,
     });
 
     let crashed = false;
@@ -168,7 +168,8 @@ function createWindow() {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 
-ipcMain.handle("show-save-dialog", async (event, { filename, buffer }) => {
+ipcMain.handle("show-save-dialog", async (event, { filename }) => {
+  // Abre o dialog — o Flask/yt-dlp grava o arquivo, não o Electron
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: filename,
     filters: [
@@ -177,13 +178,8 @@ ipcMain.handle("show-save-dialog", async (event, { filename, buffer }) => {
       { name: "Todos os arquivos", extensions: ["*"] },
     ],
   });
-  if (result.canceled || !result.filePath) return { success: false, canceled: true };
-  try {
-    fs.writeFileSync(result.filePath, Buffer.from(buffer));
-    return { success: true, path: result.filePath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+  if (result.canceled || !result.filePath) return { canceled: true };
+  return { canceled: false, path: result.filePath };
 });
 
 ipcMain.handle("get-api-url", () => API_URL);
