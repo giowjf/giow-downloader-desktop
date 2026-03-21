@@ -2,13 +2,14 @@
   "name": "giow-downloader",
   "version": "1.0.0",
   "description": "GIOW Video Downloader",
+  "author": "GIOW",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win portable",
-    "build:mac": "electron-builder --mac dmg",
-    "build:linux": "electron-builder --linux AppImage"
+    "build": "electron-builder --publish never",
+    "build:win": "electron-builder --win portable --publish never",
+    "build:mac": "electron-builder --mac dmg --publish never",
+    "build:linux": "electron-builder --linux AppImage --publish never"
   },
   "build": {
     "appId": "pro.giow.downloader",
