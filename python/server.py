@@ -111,12 +111,27 @@ def run_ytdlp(args, timeout=60):
     """Executa yt-dlp com os argumentos fornecidos."""
     ytdlp = get_ytdlp_path()
     cmd = [ytdlp] + args
+    print(f"[ytdlp] cmd: {cmd[0]}")
+
+    # Esconde janela CMD no Windows
+    kwargs = {}
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        kwargs["startupinfo"] = si
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         timeout=timeout,
+        **kwargs,
     )
+    print(f"[ytdlp] returncode: {result.returncode}")
+    if result.stdout: print(f"[ytdlp] stdout: {result.stdout[:300]}")
+    if result.stderr: print(f"[ytdlp] stderr: {result.stderr[:500]}")
     return result
 
 
@@ -326,7 +341,15 @@ def download():
         cmd.append(url)
 
         print(f"[download] Iniciando: {url[:60]}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        dl_kwargs = {}
+        if sys.platform == "win32":
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0
+            dl_kwargs["startupinfo"] = si
+            dl_kwargs["creationflags"] = 0x08000000
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, **dl_kwargs)
+        if result.stderr: print(f"[download] stderr: {result.stderr[:500]}")
 
         if result.returncode != 0:
             raise ValueError(result.stderr[-300:])
