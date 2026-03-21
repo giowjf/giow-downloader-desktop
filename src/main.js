@@ -16,12 +16,13 @@ function getPythonExe() {
   const isWin = process.platform === "win32";
   const exeName = isWin ? "server.exe" : "server";
 
-  // asarUnpack desempacota server/ para app.asar.unpacked/server/
+  // extraResources copia de dist/server/ para resources/server/
+  // O executável fica em resources/server/<exeName>
   const candidates = [
-    // Produção: app.asar.unpacked/server/server[.exe]  ← asarUnpack
-    path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
-    // Fallback: resources/server/ (caso sem asar)
+    // Produção: resources/server/server[.exe]  ← extraResources
     path.join(process.resourcesPath, "server", exeName),
+    // Fallback legado: app.asar.unpacked/server/
+    path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
     // Desenvolvimento local
     path.join(__dirname, "..", "server", exeName),
     path.join(__dirname, "..", "python-dist", "server", exeName),
@@ -34,6 +35,15 @@ function getPythonExe() {
     console.log("  ", p, "->", exists ? "EXISTE" : "nao encontrado");
     if (exists) return p;
   }
+
+  // Debug: lista o que existe em resources/
+  console.log("[electron] FALHA — listando resources/:");
+  try {
+    fs.readdirSync(process.resourcesPath).forEach(f =>
+      console.log("  resources/", f)
+    );
+  } catch (e) { console.log("  erro:", e.message); }
+
   return null;
 }
 
@@ -43,56 +53,39 @@ function startPythonServer() {
   return new Promise((resolve, reject) => {
     const exe = getPythonExe();
     if (!exe) {
-      // Debug detalhado: lista o que realmente existe em resources/
-      let debugLines = ["Candidatos testados (nenhum encontrado):"];
-      const isWin = process.platform === "win32";
-      const exeName = isWin ? "server.exe" : "server";
-      debugLines.push(
-        `  ${path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName)}`,
-        `  ${path.join(process.resourcesPath, "server", exeName)}`
-      );
-
+      // Monta mensagem de debug para o dialog de erro
+      let info = [];
       try {
-        debugLines.push(`\nConteúdo de resources/:`);
-        fs.readdirSync(process.resourcesPath).forEach(f => debugLines.push(`  ${f}`));
-      } catch (e) { debugLines.push(`  (erro ao listar: ${e.message})`); }
-
-      try {
-        const unpackedPath = path.join(process.resourcesPath, "app.asar.unpacked");
-        if (fs.existsSync(unpackedPath)) {
-          debugLines.push(`\nConteúdo de app.asar.unpacked/:`);
-          fs.readdirSync(unpackedPath).forEach(f => debugLines.push(`  ${f}`));
+        info.push("resources/ contém:");
+        fs.readdirSync(process.resourcesPath).forEach(f => info.push("  " + f));
+        const serverDir = path.join(process.resourcesPath, "server");
+        if (fs.existsSync(serverDir)) {
+          info.push("resources/server/ contém:");
+          fs.readdirSync(serverDir).forEach(f => info.push("  " + f));
         } else {
-          debugLines.push(`\napp.asar.unpacked/ NÃO existe`);
+          info.push("resources/server/ NÃO existe");
         }
-      } catch (e) { debugLines.push(`  (erro: ${e.message})`); }
-
-      reject(new Error("Servidor Python não encontrado. Reinstale o aplicativo.\n\n" + debugLines.join("\n")));
+      } catch (e) {
+        info.push("erro ao listar: " + e.message);
+      }
+      reject(new Error(
+        "Servidor Python não encontrado. Reinstale o aplicativo.\n\n" +
+        `resourcesPath: ${process.resourcesPath}\n` +
+        info.join("\n")
+      ));
       return;
     }
 
     console.log("[electron] Iniciando servidor:", exe);
-    console.log("[electron] Existe?", fs.existsSync(exe));
-    console.log("[electron] resourcesPath:", process.resourcesPath);
-    console.log("[electron] __dirname:", __dirname);
 
-    // Em macOS/Linux, garante que o binário tem permissão de execução
+    // Em macOS/Linux, garante permissão de execução
     if (process.platform !== "win32") {
-      try {
-        fs.chmodSync(exe, 0o755);
-        console.log("[electron] chmod 755 aplicado ao servidor");
-      } catch (e) {
-        console.warn("[electron] Não foi possível aplicar chmod:", e.message);
-      }
+      try { fs.chmodSync(exe, 0o755); } catch (e) {}
     }
 
     pythonProcess = spawn(exe, [], {
-      env: {
-        ...process.env,
-        GIOW_PORT: String(API_PORT),
-        GIOW_MODE: "desktop",
-      },
-      windowsHide: false, // mostra console para debug
+      env: { ...process.env, GIOW_PORT: String(API_PORT), GIOW_MODE: "desktop" },
+      windowsHide: false,
     });
 
     pythonProcess.stdout.on("data", (d) => console.log("[python]", d.toString().trim()));
@@ -132,23 +125,18 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      // Permite fetch para localhost sem CORS
-      webSecurity: false,
+      webSecurity: false, // permite fetch para localhost
     },
     autoHideMenuBar: true,
     frame: true,
   });
 
   mainWindow.loadFile(path.join(__dirname, "index.html"));
-
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
+  mainWindow.on("closed", () => { mainWindow = null; });
 }
 
-// ── IPC — comunicação front ↔ main ────────────────────────────────────────
+// ── IPC ────────────────────────────────────────────────────────────────────
 
-// Salvar arquivo com dialog nativo do sistema
 ipcMain.handle("show-save-dialog", async (event, { filename, buffer }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: filename,
@@ -158,11 +146,7 @@ ipcMain.handle("show-save-dialog", async (event, { filename, buffer }) => {
       { name: "Todos os arquivos", extensions: ["*"] },
     ],
   });
-
-  if (result.canceled || !result.filePath) {
-    return { success: false, canceled: true };
-  }
-
+  if (result.canceled || !result.filePath) return { success: false, canceled: true };
   try {
     fs.writeFileSync(result.filePath, Buffer.from(buffer));
     return { success: true, path: result.filePath };
@@ -171,7 +155,6 @@ ipcMain.handle("show-save-dialog", async (event, { filename, buffer }) => {
   }
 });
 
-// Retorna a URL da API local
 ipcMain.handle("get-api-url", () => API_URL);
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -182,27 +165,16 @@ app.whenReady().then(async () => {
     createWindow();
   } catch (err) {
     console.error("[electron] Erro ao iniciar:", err);
-    const debugInfo = [
-      `Erro: ${err.message}`,
-      `resourcesPath: ${process.resourcesPath}`,
-      `__dirname: ${__dirname}`,
-    ].join("\n");
-    dialog.showErrorBox("Erro ao iniciar GIOW Downloader", debugInfo);
+    dialog.showErrorBox("Erro ao iniciar GIOW Downloader", err.message);
     app.quit();
   }
 });
 
 app.on("window-all-closed", () => {
-  // Encerra o servidor Python ao fechar
-  if (pythonProcess) {
-    pythonProcess.kill();
-    pythonProcess = null;
-  }
+  if (pythonProcess) { pythonProcess.kill(); pythonProcess = null; }
   app.quit();
 });
 
 app.on("before-quit", () => {
-  if (pythonProcess) {
-    pythonProcess.kill();
-  }
+  if (pythonProcess) { pythonProcess.kill(); }
 });
