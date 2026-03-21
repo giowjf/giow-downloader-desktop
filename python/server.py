@@ -103,7 +103,10 @@ def get_ffmpeg_path():
         base = sys._MEIPASS
         for p in [os.path.join(base, "ffmpeg.exe"), os.path.join(base, "ffmpeg")]:
             if os.path.exists(p):
+                print(f"[server] ffmpeg encontrado: {p}")
                 return p
+        print(f"[server] AVISO: ffmpeg não encontrado em _MEIPASS={base}")
+        print(f"[server] Conteúdo de _MEIPASS: {os.listdir(base)[:30]}")
     return "ffmpeg"
 
 
@@ -294,6 +297,10 @@ def analyze():
 
 @app.route("/download", methods=["POST", "OPTIONS"])
 def download():
+    """
+    Download com yt-dlp via SSE (Server-Sent Events).
+    Envia progresso em tempo real para o frontend.
+    """
     if request.method == "OPTIONS":
         return "", 204
 
@@ -306,60 +313,100 @@ def download():
     if not url or not output_path:
         return jsonify({"error": "missing url or output_path"}), 400
 
-    try:
-        ytdlp = get_ytdlp_path()
-        ffmpeg = get_ffmpeg_path()
+    def generate():
+        try:
+            ytdlp = get_ytdlp_path()
+            ffmpeg = get_ffmpeg_path()
+            ffmpeg_dir = os.path.dirname(ffmpeg)
 
-        if mode == "mp3":
-            fmt = "bestaudio/best"
-        elif format_id and format_id != "mp3":
-            fmt = (f"{format_id}+bestaudio[ext=m4a]/"
-                   f"{format_id}+bestaudio/"
-                   f"{format_id}/"
-                   "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best")
-        else:
-            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+            if mode == "mp3":
+                fmt = "bestaudio/best"
+            elif format_id and format_id != "mp3":
+                fmt = (f"{format_id}+bestaudio[ext=m4a]/"
+                       f"{format_id}+bestaudio/"
+                       f"{format_id}/"
+                       "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best")
+            else:
+                fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
 
-        cmd = [
-            ytdlp,
-            "--no-check-certificate",
-            "--no-playlist",
-            "--format", fmt,
-            "--ffmpeg-location", os.path.dirname(ffmpeg),
-            "--output", output_path,
-            "--quiet",
-            "--progress",
-        ]
-
-        if mode == "mp3":
-            cmd += [
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "192K",
+            cmd = [
+                ytdlp,
+                "--no-check-certificate",
+                "--no-playlist",
+                "--format", fmt,
+                "--output", output_path,
+                "--newline",   # progresso linha a linha
             ]
 
-        cmd.append(url)
+            if ffmpeg_dir and os.path.exists(ffmpeg_dir):
+                cmd += ["--ffmpeg-location", ffmpeg_dir]
 
-        print(f"[download] Iniciando: {url[:60]}")
-        dl_kwargs = {}
-        if sys.platform == "win32":
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0
-            dl_kwargs["startupinfo"] = si
-            dl_kwargs["creationflags"] = 0x08000000
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, **dl_kwargs)
-        if result.stderr: print(f"[download] stderr: {result.stderr[:500]}")
+            if mode == "mp3":
+                cmd += [
+                    "--extract-audio",
+                    "--audio-format", "mp3",
+                    "--audio-quality", "192K",
+                ]
 
-        if result.returncode != 0:
-            raise ValueError(result.stderr[-300:])
+            cmd.append(url)
 
-        print(f"[download] Concluído: {output_path}")
-        return jsonify({"success": True, "path": output_path})
+            print(f"[download] Iniciando: {url[:60]}")
+            print(f"[download] cmd: {' '.join(cmd[:5])}...")
 
-    except Exception as e:
-        print(f"[download] ERRO: {e}")
-        return jsonify({"error": str(e)}), 500
+            kwargs = {}
+            if sys.platform == "win32":
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0
+                kwargs["startupinfo"] = si
+                kwargs["creationflags"] = 0x08000000
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                **kwargs,
+            )
+
+            import re
+            progress_re = re.compile(r"(\d+\.?\d*)%")
+
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                print(f"[ytdlp-dl] {line}")
+                m = progress_re.search(line)
+                if m:
+                    pct = float(m.group(1))
+                    yield "data: " + json.dumps({"progress": pct}) + "\n\n"
+                elif "[download]" in line or "[ffmpeg]" in line or "[Merger]" in line:
+                    yield "data: " + json.dumps({"status": line}) + "\n\n"
+
+            proc.wait()
+            stderr_out = proc.stderr.read()
+            if stderr_out:
+                print(f"[download] stderr: {stderr_out[:500]}")
+
+            if proc.returncode != 0:
+                yield "data: " + json.dumps({"error": stderr_out[-300:] or "yt-dlp falhou"}) + "\n\n"
+            else:
+                print(f"[download] Concluído: {output_path}")
+                yield "data: " + json.dumps({"done": True, "path": output_path}) + "\n\n"
+
+        except Exception as e:
+            print(f"[download] ERRO: {e}")
+            yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
