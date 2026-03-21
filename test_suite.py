@@ -45,7 +45,6 @@ def test_structure():
         path = os.path.join(ROOT, f)
         check(f"Arquivo {f} existe", os.path.exists(path))
 
-    # Não deve ter build.yml na raiz
     check("build.yml NÃO está na raiz (só em .github/workflows/)",
           not os.path.exists(os.path.join(ROOT, "build.yml")))
 
@@ -92,18 +91,26 @@ def test_package_json():
               for t in build.get("win", {}).get("target", [])))
     check("files inclui src/**/*",
           "src/**/*" in build.get("files", []))
-    check("files inclui server/**/*",
-          "server/**/*" in build.get("files", []),
-          "server/ precisa estar em files para o asarUnpack funcionar")
-    check("asarUnpack configurado para server/",
-          "server/**/*" in build.get("asarUnpack", []),
-          "sem asarUnpack o server.exe fica dentro do .asar e não é executável")
+
+    # extraResources é o padrão correto para binários externos
+    extra = build.get("extraResources", [])
+    has_server_extra = any(
+        isinstance(e, dict) and e.get("from", "").startswith("server")
+        for e in extra
+    )
+    check("extraResources configura server/ corretamente",
+          has_server_extra,
+          "extraResources deve copiar server/ → resources/server/")
+
+    check("--publish never nos scripts de build",
+          all("--publish never" in s
+              for k, s in pkg.get("scripts", {}).items()
+              if k.startswith("build")),
+          "Sem --publish never o electron-builder tenta publicar no CI e falha")
+
     check("Sem icon.ico (arquivo não existe)",
           "icon" not in build.get("win", {}),
           "Remover referência ao icon.ico ou criar o arquivo")
-    check("Sem extraResources (usa asarUnpack)",
-          "extraResources" not in build,
-          "extraResources no portable não funciona corretamente — usar asarUnpack")
 
 
 # ── BLOCO 4: main.js ────────────────────────────────────────────────────────
@@ -112,9 +119,12 @@ def test_main_js():
     section("4. src/main.js")
     content = open(os.path.join(ROOT, "src/main.js")).read()
 
-    check("Usa app.asar.unpacked como caminho principal do server.exe",
-          "app.asar.unpacked" in content,
-          "O asarUnpack coloca arquivos em resources/app.asar.unpacked/")
+    check("Usa process.resourcesPath para localizar server",
+          "process.resourcesPath" in content,
+          "O servidor deve ser buscado em resourcesPath (extraResources)")
+    check("Busca server/ dentro de resourcesPath",
+          'path.join(process.resourcesPath, "server"' in content,
+          "extraResources coloca server/ em resources/server/")
     check("getPythonExe() implementada",
           "function getPythonExe" in content)
     check("startPythonServer() implementada",
@@ -204,8 +214,6 @@ def test_build_yml():
           "server.exe encontrado" in content or "server/server.exe" in content)
     check("Passo de cópia python-dist/server → server/",
           "Copy-Item" in content and "server" in content)
-    check("asarUnpack mencionado ou server/ copiado antes do build",
-          "Copy-Item" in content)
     check("Upload do artefato configurado",
           "upload-artifact" in content)
     check("workflow_dispatch (trigger manual)",
