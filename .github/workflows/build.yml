@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build Multi-Platform
 
 on:
   push:
@@ -8,7 +8,20 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            artifact_glob: "dist/GIOW-Downloader-*-win.exe"
+          - os: macos-latest
+            target: mac
+            artifact_glob: "dist/GIOW-Downloader-*-mac.dmg"
+          - os: ubuntu-latest
+            target: linux
+            artifact_glob: "dist/GIOW-Downloader-*-linux.AppImage"
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -24,16 +37,27 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Instalar ffmpeg
+      # ── Instalar ffmpeg por plataforma ─────────────────────────────────────
+      - name: Instalar ffmpeg (Windows)
+        if: matrix.os == 'windows-latest'
         run: choco install ffmpeg -y
 
+      - name: Instalar ffmpeg (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install ffmpeg
+
+      - name: Instalar ffmpeg (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # ── Dependências Python ────────────────────────────────────────────────
       - name: Instalar dependências Python
         run: pip install "yt-dlp[default]" flask flask-cors pyinstaller
 
-      - name: Instalar dependências Node
-        run: npm install
-
-      - name: Build — PyInstaller (servidor Python)
+      # ── PyInstaller ────────────────────────────────────────────────────────
+      - name: Build PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           $ytdlp = (Get-Command yt-dlp).Source
           $ffmpeg = (Get-Command ffmpeg).Source
@@ -49,41 +73,76 @@ jobs:
             "--add-binary=$ffmpeg;." `
             python/server.py
 
-      - name: Verificar python-dist
+      - name: Build PyInstaller (macOS/Linux)
+        if: matrix.os != 'windows-latest'
         run: |
-          Write-Host "Conteúdo de python-dist:"
-          Get-ChildItem -Recurse python-dist | Select-Object FullName | Head -20
-          if (Test-Path "python-dist/server/server.exe") {
-            Write-Host "server.exe encontrado!"
-          } else {
-            Write-Host "ERRO: server.exe não encontrado"
-            exit 1
-          }
+          YTDLP=$(which yt-dlp)
+          FFMPEG=$(which ffmpeg)
+          python -m PyInstaller \
+            --onedir \
+            --name server \
+            --distpath python-dist \
+            --workpath build/pyinstaller \
+            --specpath build \
+            --clean \
+            "--add-binary=$YTDLP:." \
+            "--add-binary=$FFMPEG:." \
+            python/server.py
+          chmod 755 python-dist/server/server
 
-      - name: Copiar server para pasta acessível pelo Electron
+      # ── Copia server/ para onde o electron-builder espera ─────────────────
+      - name: Copiar server (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           Copy-Item -Recurse -Force python-dist/server server
-          Write-Host "server/server.exe existe:" (Test-Path "server/server.exe")
+          if (Test-Path "server/server.exe") {
+            Write-Host "✓ server/server.exe encontrado"
+          } else {
+            Write-Host "ERRO: server/server.exe não encontrado"; exit 1
+          }
 
-      - name: Build — Electron (executável portátil)
-        run: npm run build
-
-      - name: Listar conteúdo do dist
+      - name: Copiar server (macOS/Linux)
+        if: matrix.os != 'windows-latest'
         run: |
-          Write-Host "=== Conteúdo de dist/ ==="
-          Get-ChildItem -Recurse dist | Select-Object FullName
+          cp -r python-dist/server server
+          chmod 755 server/server
+          if [ -f "server/server" ]; then
+            echo "✓ server/server encontrado"
+          else
+            echo "ERRO: server/server não encontrado"; exit 1
+          fi
 
+      # ── Build Electron ─────────────────────────────────────────────────────
+      - name: npm install
+        run: npm install
+
+      - name: Build Electron (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npm run build:win
+
+      - name: Build Electron (macOS)
+        if: matrix.os == 'macos-latest'
+        run: npm run build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # sem code signing no CI
+
+      - name: Build Electron (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run build:linux
+
+      # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload artefato
         uses: actions/upload-artifact@v4
         with:
-          name: GIOW-Downloader-Windows
-          path: dist/GIOW-Downloader-*.exe
+          name: GIOW-Downloader-${{ matrix.target }}
+          path: ${{ matrix.artifact_glob }}
           retention-days: 30
 
       - name: Release (se for tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/GIOW-Downloader-*.exe
+          files: ${{ matrix.artifact_glob }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
