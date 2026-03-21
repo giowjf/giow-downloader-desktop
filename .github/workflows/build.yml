@@ -87,6 +87,7 @@ jobs:
         shell: pwsh
         run: |
           $ffmpeg = (Get-Command ffmpeg).Source
+          $ytdlp = (Resolve-Path "yt-dlp.exe").Path
           python -m PyInstaller `
             --onedir `
             --name server `
@@ -95,7 +96,7 @@ jobs:
             --specpath build `
             --noconsole `
             --clean `
-            "--add-binary=yt-dlp.exe;." `
+            "--add-binary=$ytdlp;." `
             "--add-binary=$ffmpeg;." `
             python/server.py
 
@@ -103,6 +104,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           FFMPEG=$(which ffmpeg)
+          YTDLP="$PWD/yt-dlp"
           python -m PyInstaller \
             --onedir \
             --name server \
@@ -110,7 +112,7 @@ jobs:
             --workpath build/pyinstaller \
             --specpath build \
             --clean \
-            "--add-binary=yt-dlp:." \
+            "--add-binary=$YTDLP:." \
             "--add-binary=$FFMPEG:." \
             python/server.py
           chmod 755 python-dist/server/server
