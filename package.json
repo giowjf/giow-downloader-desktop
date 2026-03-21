@@ -18,11 +18,14 @@
       "output": "dist"
     },
     "files": [
-      "src/**/*",
-      "server/**/*"
+      "src/**/*"
     ],
-    "asarUnpack": [
-      "server/**/*"
+    "extraResources": [
+      {
+        "from": "server/",
+        "to": "server",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": [
