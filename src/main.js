@@ -8,7 +8,7 @@ const os = require("os");
 let mainWindow = null;
 let pythonProcess = null;
 const API_PORT = 5001;
-const API_URL = `http://localhost:${API_PORT}`;
+const API_URL = `http://127.0.0.1:${API_PORT}`;
 const LOG_PATH = path.join(os.tmpdir(), "giow-server.log");
 
 // ── Localiza o executável Python bundled ────────────────────────────────────
