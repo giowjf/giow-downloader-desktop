@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: "20"
 
-      # ── Instalar ffmpeg por plataforma ─────────────────────────────────────
+      # ── ffmpeg ─────────────────────────────────────────────────────────────
       - name: Instalar ffmpeg (Windows)
         if: matrix.os == 'windows-latest'
         run: choco install ffmpeg -y
@@ -50,16 +50,42 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      # ── Dependências Python ────────────────────────────────────────────────
-      - name: Instalar dependências Python
-        run: pip install "yt-dlp[default]" flask flask-cors pyinstaller
+      # ── yt-dlp como binário standalone (NÃO via pip) ───────────────────────
+      # Motivo: yt-dlp instalado via pip e bundled pelo PyInstaller cria um
+      # executável PyInstaller-within-PyInstaller que crasha silenciosamente.
+      # A solução é baixar o binário oficial standalone do yt-dlp diretamente.
+      - name: Baixar yt-dlp standalone (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+          Invoke-WebRequest -Uri $url -OutFile "yt-dlp.exe"
+          Write-Host "yt-dlp.exe baixado: $((Get-Item yt-dlp.exe).Length) bytes"
 
-      # ── PyInstaller ────────────────────────────────────────────────────────
+      - name: Baixar yt-dlp standalone (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o yt-dlp
+          chmod 755 yt-dlp
+          echo "yt-dlp baixado: $(du -h yt-dlp | cut -f1)"
+
+      - name: Baixar yt-dlp standalone (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o yt-dlp
+          chmod 755 yt-dlp
+          echo "yt-dlp baixado: $(du -h yt-dlp | cut -f1)"
+
+      # ── Dependências Python (sem yt-dlp — usamos o binário standalone) ─────
+      - name: Instalar dependências Python
+        run: pip install flask flask-cors pyinstaller
+
+      # ── PyInstaller — embute flask + ffmpeg, mas NÃO o yt-dlp ────────────
+      # O yt-dlp standalone é adicionado como binário direto (não reempacotado)
       - name: Build PyInstaller (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $ytdlp = (Get-Command yt-dlp).Source
           $ffmpeg = (Get-Command ffmpeg).Source
           python -m PyInstaller `
             --onedir `
@@ -69,14 +95,13 @@ jobs:
             --specpath build `
             --noconsole `
             --clean `
-            "--add-binary=$ytdlp;." `
+            "--add-binary=yt-dlp.exe;." `
             "--add-binary=$ffmpeg;." `
             python/server.py
 
       - name: Build PyInstaller (macOS/Linux)
         if: matrix.os != 'windows-latest'
         run: |
-          YTDLP=$(which yt-dlp)
           FFMPEG=$(which ffmpeg)
           python -m PyInstaller \
             --onedir \
@@ -85,10 +110,33 @@ jobs:
             --workpath build/pyinstaller \
             --specpath build \
             --clean \
-            "--add-binary=$YTDLP:." \
+            "--add-binary=yt-dlp:." \
             "--add-binary=$FFMPEG:." \
             python/server.py
           chmod 755 python-dist/server/server
+
+      # ── Verificar que yt-dlp está dentro do bundle ─────────────────────────
+      - name: Verificar yt-dlp no bundle (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ytdlp = "python-dist/server/_internal/yt-dlp.exe"
+          if (Test-Path $ytdlp) {
+            Write-Host "✓ yt-dlp.exe encontrado no bundle"
+          } else {
+            Write-Host "Conteúdo de _internal:"; Get-ChildItem "python-dist/server/_internal" | Select-Object Name
+            Write-Host "ERRO: yt-dlp.exe não encontrado no bundle"; exit 1
+          }
+
+      - name: Verificar yt-dlp no bundle (macOS/Linux)
+        if: matrix.os != 'windows-latest'
+        run: |
+          if [ -f "python-dist/server/_internal/yt-dlp" ]; then
+            echo "✓ yt-dlp encontrado no bundle"
+          else
+            echo "Conteúdo de _internal:"; ls python-dist/server/_internal/
+            echo "ERRO: yt-dlp não encontrado no bundle"; exit 1
+          fi
 
       # ── Copia server/ para onde o electron-builder espera ─────────────────
       - name: Copiar server (Windows)
