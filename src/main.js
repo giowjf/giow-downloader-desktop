@@ -3,27 +3,24 @@ const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 
 let mainWindow = null;
 let pythonProcess = null;
 const API_PORT = 5001;
 const API_URL = `http://localhost:${API_PORT}`;
+const LOG_PATH = path.join(os.tmpdir(), "giow-server.log");
 
 // ── Localiza o executável Python bundled ────────────────────────────────────
 
 function getPythonExe() {
-  // Em Windows o binário é server.exe, em macOS/Linux é apenas server
   const isWin = process.platform === "win32";
   const exeName = isWin ? "server.exe" : "server";
 
-  // extraResources copia de dist/server/ para resources/server/
-  // O executável fica em resources/server/<exeName>
+  // extraResources copia server/ → resources/server/
   const candidates = [
-    // Produção: resources/server/server[.exe]  ← extraResources
     path.join(process.resourcesPath, "server", exeName),
-    // Fallback legado: app.asar.unpacked/server/
     path.join(process.resourcesPath, "app.asar.unpacked", "server", exeName),
-    // Desenvolvimento local
     path.join(__dirname, "..", "server", exeName),
     path.join(__dirname, "..", "python-dist", "server", exeName),
   ];
@@ -35,50 +32,50 @@ function getPythonExe() {
     console.log("  ", p, "->", exists ? "EXISTE" : "nao encontrado");
     if (exists) return p;
   }
-
-  // Debug: lista o que existe em resources/
-  console.log("[electron] FALHA — listando resources/:");
-  try {
-    fs.readdirSync(process.resourcesPath).forEach(f =>
-      console.log("  resources/", f)
-    );
-  } catch (e) { console.log("  erro:", e.message); }
-
   return null;
+}
+
+// ── Lê o log do servidor Python (para debug no dialog de erro) ──────────────
+
+function readServerLog() {
+  try {
+    if (fs.existsSync(LOG_PATH)) {
+      const content = fs.readFileSync(LOG_PATH, "utf-8");
+      // Retorna as últimas 30 linhas
+      const lines = content.trim().split("\n");
+      return lines.slice(-30).join("\n");
+    }
+  } catch (e) {}
+  return "(log não disponível)";
 }
 
 // ── Inicia o servidor Python local ─────────────────────────────────────────
 
 function startPythonServer() {
   return new Promise((resolve, reject) => {
+    // Limpa log anterior
+    try { fs.unlinkSync(LOG_PATH); } catch (e) {}
+
     const exe = getPythonExe();
     if (!exe) {
-      // Monta mensagem de debug para o dialog de erro
-      let info = [];
+      let info = [`resourcesPath: ${process.resourcesPath}`];
       try {
         info.push("resources/ contém:");
         fs.readdirSync(process.resourcesPath).forEach(f => info.push("  " + f));
-        const serverDir = path.join(process.resourcesPath, "server");
-        if (fs.existsSync(serverDir)) {
+        const s = path.join(process.resourcesPath, "server");
+        if (fs.existsSync(s)) {
           info.push("resources/server/ contém:");
-          fs.readdirSync(serverDir).forEach(f => info.push("  " + f));
+          fs.readdirSync(s).forEach(f => info.push("  " + f));
         } else {
           info.push("resources/server/ NÃO existe");
         }
-      } catch (e) {
-        info.push("erro ao listar: " + e.message);
-      }
-      reject(new Error(
-        "Servidor Python não encontrado. Reinstale o aplicativo.\n\n" +
-        `resourcesPath: ${process.resourcesPath}\n` +
-        info.join("\n")
-      ));
+      } catch (e) { info.push("erro: " + e.message); }
+      reject(new Error("server.exe não encontrado\n\n" + info.join("\n")));
       return;
     }
 
     console.log("[electron] Iniciando servidor:", exe);
 
-    // Em macOS/Linux, garante permissão de execução
     if (process.platform !== "win32") {
       try { fs.chmodSync(exe, 0o755); } catch (e) {}
     }
@@ -88,23 +85,57 @@ function startPythonServer() {
       windowsHide: false,
     });
 
-    pythonProcess.stdout.on("data", (d) => console.log("[python]", d.toString().trim()));
-    pythonProcess.stderr.on("data", (d) => console.error("[python-err]", d.toString().trim()));
-    pythonProcess.on("exit", (code) => console.log("[python] encerrado com código", code));
+    let crashed = false;
+    let stdoutBuf = "";
+    let stderrBuf = "";
+
+    pythonProcess.stdout.on("data", (d) => {
+      const s = d.toString();
+      stdoutBuf += s;
+      console.log("[python]", s.trim());
+    });
+    pythonProcess.stderr.on("data", (d) => {
+      const s = d.toString();
+      stderrBuf += s;
+      console.error("[python-err]", s.trim());
+    });
+
+    // Rejeita imediatamente se o processo morrer antes do servidor subir
+    pythonProcess.on("exit", (code) => {
+      console.log("[python] encerrado com código", code);
+      if (!crashed) {
+        crashed = true;
+        clearInterval(checkInterval);
+        const log = readServerLog();
+        reject(new Error(
+          `Servidor Python encerrou com código ${code}\n\n` +
+          `Log (${LOG_PATH}):\n${log}\n\n` +
+          `stderr:\n${stderrBuf.slice(-500) || "(vazio)"}`
+        ));
+      }
+    });
 
     // Aguarda o servidor ficar disponível (até 30s)
     const start = Date.now();
-    const check = setInterval(() => {
+    const checkInterval = setInterval(() => {
+      if (crashed) return;
       http.get(`${API_URL}/`, (res) => {
         if (res.statusCode === 200) {
-          clearInterval(check);
+          clearInterval(checkInterval);
           console.log("[electron] Servidor Python pronto");
           resolve();
         }
       }).on("error", () => {
         if (Date.now() - start > 30000) {
-          clearInterval(check);
-          reject(new Error("Servidor Python não respondeu em 30s"));
+          clearInterval(checkInterval);
+          if (!crashed) {
+            crashed = true;
+            const log = readServerLog();
+            reject(new Error(
+              `Servidor Python não respondeu em 30s\n\n` +
+              `Log (${LOG_PATH}):\n${log}`
+            ));
+          }
         }
       });
     }, 500);
@@ -125,7 +156,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false, // permite fetch para localhost
+      webSecurity: false,
     },
     autoHideMenuBar: true,
     frame: true,
@@ -164,7 +195,7 @@ app.whenReady().then(async () => {
     await startPythonServer();
     createWindow();
   } catch (err) {
-    console.error("[electron] Erro ao iniciar:", err);
+    console.error("[electron] Erro ao iniciar:", err.message);
     dialog.showErrorBox("Erro ao iniciar GIOW Downloader", err.message);
     app.quit();
   }
