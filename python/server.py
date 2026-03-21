@@ -8,13 +8,64 @@ import os
 import sys
 import json
 import time
-import base64
 import hashlib
-import tempfile
 import subprocess
+import traceback
 
-from flask import Flask, request, jsonify, Response
-from flask_cors import CORS
+# ── Log em arquivo para debug no .exe empacotado ─────────────────────────────
+# PyInstaller redireciona stdout/stderr para None em --noconsole
+# Escrever em arquivo garante que erros de startup sejam visíveis
+
+LOG_PATH = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "giow-server.log")
+
+class Tee:
+    """Espelha writes para arquivo + stream original (se existir)."""
+    def __init__(self, original):
+        self._original = original
+        try:
+            self._file = open(LOG_PATH, "a", encoding="utf-8", buffering=1)
+        except Exception:
+            self._file = None
+
+    def write(self, data):
+        if self._file:
+            try: self._file.write(data)
+            except Exception: pass
+        if self._original:
+            try: self._original.write(data)
+            except Exception: pass
+
+    def flush(self):
+        if self._file:
+            try: self._file.flush()
+            except Exception: pass
+        if self._original:
+            try: self._original.flush()
+            except Exception: pass
+
+    def fileno(self):
+        if self._original:
+            try: return self._original.fileno()
+            except Exception: pass
+        raise OSError("no fileno")
+
+sys.stdout = Tee(sys.stdout)
+sys.stderr = Tee(sys.stderr)
+
+print(f"[server] Iniciando — Python {sys.version}")
+print(f"[server] Log: {LOG_PATH}")
+print(f"[server] frozen: {getattr(sys, 'frozen', False)}")
+if getattr(sys, "frozen", False):
+    print(f"[server] _MEIPASS: {sys._MEIPASS}")
+
+try:
+    from flask import Flask, request, jsonify, Response
+    from flask_cors import CORS
+    print("[server] Flask importado OK")
+except Exception as e:
+    print(f"[server] ERRO ao importar Flask: {e}")
+    traceback.print_exc()
+    sys.exit(1)
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}},
@@ -32,7 +83,6 @@ ANALYZE_TTL = 300  # 5 minutos
 def get_ytdlp_path():
     """Localiza o yt-dlp bundled ou no PATH."""
     if getattr(sys, "frozen", False):
-        # Rodando como executável PyInstaller
         base = sys._MEIPASS
         candidates = [
             os.path.join(base, "yt-dlp.exe"),
@@ -40,8 +90,10 @@ def get_ytdlp_path():
         ]
         for p in candidates:
             if os.path.exists(p):
+                print(f"[server] yt-dlp encontrado: {p}")
                 return p
-    # Desenvolvimento — usa do PATH
+        print(f"[server] AVISO: yt-dlp não encontrado em _MEIPASS={base}")
+        print(f"[server] Conteúdo de _MEIPASS: {os.listdir(base)[:20]}")
     return "yt-dlp"
 
 
@@ -218,7 +270,7 @@ def analyze():
             "uploader": info.get("uploader"),
             "formats": formats,
             "elapsed": elapsed,
-            "urls_need_proxy": False,  # desktop: download direto sempre
+            "urls_need_proxy": False,
         })
     except Exception as e:
         print(f"[analyze] ERRO: {e}")
@@ -227,10 +279,6 @@ def analyze():
 
 @app.route("/download", methods=["POST", "OPTIONS"])
 def download():
-    """
-    Download com yt-dlp direto para o disco do usuário.
-    No desktop não há CORS — yt-dlp baixa e mescla vídeo+áudio com ffmpeg.
-    """
     if request.method == "OPTIONS":
         return "", 204
 
@@ -238,7 +286,7 @@ def download():
     url = data.get("url")
     format_id = data.get("format_id")
     mode = data.get("mode", "mp4")
-    output_path = data.get("output_path")  # caminho escolhido pelo usuário via dialog
+    output_path = data.get("output_path")
 
     if not url or not output_path:
         return jsonify({"error": "missing url or output_path"}), 400
@@ -295,4 +343,9 @@ def download():
 
 if __name__ == "__main__":
     print(f"[server] GIOW Desktop iniciando na porta {PORT}...")
-    app.run(host="127.0.0.1", port=PORT, debug=False, threaded=True)
+    try:
+        app.run(host="127.0.0.1", port=PORT, debug=False, threaded=True)
+    except Exception as e:
+        print(f"[server] ERRO FATAL ao iniciar Flask: {e}")
+        traceback.print_exc()
+        sys.exit(1)
